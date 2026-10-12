@@ -1,0 +1,30 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {allowedTransitions,groupTasks,taskQuery,toTaskPayload,validateTask,errorInfo,isOverdue,utcDay} from '../src/domain.js';
+
+test('backlog permits starting only',()=>assert.deepEqual(allowedTransitions('backlog'),['doing']));
+test('doing permits pause, block and complete',()=>assert.deepEqual(allowedTransitions('doing'),['backlog','blocked','done']));
+test('blocked permits restart or return to backlog',()=>assert.deepEqual(allowedTransitions('blocked'),['doing','backlog']));
+test('done can reopen and cannot close again',()=>assert.deepEqual(allowedTransitions('done'),['doing']));
+test('unknown status offers no transitions',()=>assert.deepEqual(allowedTransitions('unknown'),[]));
+test('an inherited object key never becomes an available transition',()=>assert.deepEqual(allowedTransitions('constructor'),[]));
+test('board preserves task identity and empty columns',()=>{
+ const a={id:1,status:'doing'}, b={id:2,status:'backlog'};
+ assert.deepEqual(groupTasks([a,b,{id:3,status:'invalid'}]),{backlog:[b],doing:[a],blocked:[],done:[]});
+});
+test('search query encodes spaces and filters with zero based pages',()=>assert.equal(taskQuery({q:'  接口 & 校验  ',status:'doing',priority:'high',page:2,size:20}),'q=%E6%8E%A5%E5%8F%A3+%26+%E6%A0%A1%E9%AA%8C&status=doing&priority=high&page=2&size=20'));
+test('all filters and blank query are omitted',()=>assert.equal(taskQuery({q:' ',status:'',priority:'',page:0,size:50}),'page=0&size=50'));
+test('new task payload trims input without inventing due date',()=>assert.deepEqual(toTaskPayload({title:'  接口  ',description:' 文档 ',assignee:' 小组 ',priority:'medium',dueDate:''}),{title:'接口',description:'文档',assignee:'小组',priority:'medium',dueDate:null}));
+test('edit payload retains optimistic locking version',()=>assert.equal(toTaskPayload({title:'接口',description:'',assignee:'',priority:'high',dueDate:'2026-10-20',version:0}).version,0));
+test('blank title prevents an empty task being sent',()=>assert.match(validateTask({title:'   ',description:'',assignee:'',priority:'medium'}),/标题/));
+test('oversized description is rejected before API submission',()=>assert.match(validateTask({title:'接口',description:'a'.repeat(2001),assignee:'',priority:'medium'}),/说明/));
+test('valid task is permitted',()=>assert.equal(validateTask({title:'接口',description:'',assignee:'',priority:'low'}),''));
+test('version conflict needs refresh and is distinct from generic API failure',()=>{const result=errorInfo({status:409,code:'version_conflict',message:'changed'});assert.equal(result.conflict,true);assert.match(result.message,/刷新/);});
+test('invalid transition keeps server guidance without asking to reload an edit',()=>{const result=errorInfo({status:409,code:'invalid_transition',message:'不允许从待开始直接完成'});assert.equal(result.conflict,false);assert.match(result.message,/不允许/);});
+test('unknown conflict does not claim another edit occurred',()=>{const result=errorInfo({status:409,message:'其他冲突'});assert.equal(result.conflict,false);assert.match(result.message,/其他冲突/);});
+test('server validation detail is retained for correction',()=>assert.match(errorInfo({status:400,message:'标题不能为空'}).message,/标题不能为空/));
+test('network failure gives actionable service guidance',()=>assert.match(errorInfo(new TypeError('Failed to fetch')).message,/服务/));
+test('yesterday pending task is overdue but completed one is not',()=>{assert.equal(isOverdue({dueDate:'2026-10-11',status:'doing'},'2026-10-12'),true);assert.equal(isOverdue({dueDate:'2026-10-11',status:'done'},'2026-10-12'),false);});
+test('due today and missing due date are not overdue',()=>{assert.equal(isOverdue({dueDate:'2026-10-12',status:'backlog'},'2026-10-12'),false);assert.equal(isOverdue({dueDate:null,status:'doing'},'2026-10-12'),false);});
+test('UTC day keeps Shanghai early morning on the previous UTC date',()=>assert.equal(utcDay(new Date('2026-10-12T07:30:00+08:00')),'2026-10-11'));
+test('UTC day changes at UTC midnight regardless of local timezone',()=>assert.equal(utcDay(new Date('2026-10-12T08:00:00+08:00')),'2026-10-12'));
