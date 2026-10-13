@@ -44,3 +44,18 @@ export function isOverdue(task,today) {
   return !!task.dueDate && task.status!=='done' && task.dueDate<today;
 }
 export const utcDay = (date=new Date()) => date.toISOString().slice(0,10);
+export const canWriteProject = role => role==='owner' || role==='editor';
+export const canManageMembers = role => role==='owner';
+export const assignableMembers = members => members.filter(member=>canWriteProject(member.role));
+export function projectPath(id,suffix='') {
+  if (!Number.isSafeInteger(id) || id<1) throw new Error('请选择项目');
+  return `/projects/${id}${suffix}`;
+}
+export function validateProject(name) {
+  return name.trim().length>=1 && name.trim().length<=80 ? '' : '项目名称需填写 1–80 个字符';
+}
+export function validateMember(member) {
+  if (!/^[a-zA-Z0-9_]{3,40}$/.test(member.username)) return '请输入有效的现有演示账号';
+  if (!['editor','viewer'].includes(member.role)) return '成员角色请选择编辑者或只读成员';
+  return '';
+}
