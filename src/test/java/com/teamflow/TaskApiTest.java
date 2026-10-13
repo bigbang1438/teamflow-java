@@ -1,6 +1,7 @@
 package com.teamflow;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.BeforeEach;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import java.net.URI;
@@ -12,17 +13,22 @@ import java.util.concurrent.TimeUnit;
 import static org.junit.jupiter.api.Assertions.*;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
-    properties = {"spring.datasource.url=jdbc:h2:mem:task-api;DB_CLOSE_DELAY=-1"})
+    properties = {"spring.datasource.url=jdbc:h2:mem:task-api;DB_CLOSE_DELAY=-1", "teamflow.demo-password=" + SessionClient.PASSWORD})
 class TaskApiTest {
     @LocalServerPort int port;
     final HttpClient client = HttpClient.newHttpClient();
+    SessionClient session;
+    long project;
+    @BeforeEach void authenticateAndCreateIsolatedProject() throws Exception {
+        session = new SessionClient(port); session.login("demo_owner"); project = session.project("任务行为测试");
+    }
 
     @Test void createTaskPersistsBacklogAndReturnsLocation() throws Exception {
         var response = send("POST", "/api/v1/tasks", """
-            {"title":"实现任务看板","description":"课程演示","assignee":"演示用户","priority":"high","dueDate":"2027-01-10"}
+            {"title":"实现任务看板","description":"课程演示","assignee":"demo_owner","priority":"high","dueDate":"2027-01-10"}
             """);
         assertEquals(201, response.statusCode());
-        assertTrue(response.headers().firstValue("Location").orElse("").startsWith("/api/v1/tasks/"));
+        assertTrue(response.headers().firstValue("Location").orElse("").startsWith("/api/v1/projects/" + project + "/tasks/"));
         assertTrue(response.body().contains("\"status\":\"backlog\""));
         assertTrue(response.body().contains("\"version\":0"));
         var read = send("GET", response.headers().firstValue("Location").orElseThrow(), null);
@@ -153,8 +159,9 @@ class TaskApiTest {
         assertEquals(404, send("GET", "/api/v1/nonexistent", null).statusCode());
         var request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/api/v1/tasks"))
             .header("Content-Type", "text/plain")
+            .header("X-CSRF-TOKEN", session.csrf)
             .POST(HttpRequest.BodyPublishers.ofString("hello")).build();
-        var response = client.send(request, HttpResponse.BodyHandlers.ofString());
+        var response = session.send("POST", "/api/v1/projects/" + project + "/tasks", "hello", true, "text/plain");
         assertEquals(415, response.statusCode());
         assertFalse(response.body().contains("Exception"));
     }
@@ -165,7 +172,7 @@ class TaskApiTest {
         return response.headers().firstValue("Location").orElseThrow();
     }
     String taskBody(String title, Integer version) {
-        return "{\"title\":\"" + title + "\",\"description\":\"测试数据\",\"assignee\":\"演示用户\",\"priority\":\"medium\",\"dueDate\":null" +
+        return "{\"title\":\"" + title + "\",\"description\":\"测试数据\",\"assignee\":\"demo_owner\",\"priority\":\"medium\",\"dueDate\":null" +
             (version == null ? "" : ",\"version\":" + version) + "}";
     }
     HttpResponse<String> transition(String path, String status, int version) throws Exception {
@@ -179,9 +186,7 @@ class TaskApiTest {
     }
 
     HttpResponse<String> send(String method, String path, String body) throws Exception {
-        var builder = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path))
-            .header("Content-Type", "application/json");
-        builder.method(method, body == null ? HttpRequest.BodyPublishers.noBody() : HttpRequest.BodyPublishers.ofString(body));
-        return client.send(builder.build(), HttpResponse.BodyHandlers.ofString());
+        if (path.startsWith("/api/v1/tasks") || path.startsWith("/api/v1/summary")) path = path.replaceFirst("/api/v1", "/api/v1/projects/" + project);
+        return session.send(method, path, body);
     }
 }
