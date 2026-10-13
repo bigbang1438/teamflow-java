@@ -5,13 +5,16 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.stereotype.Component;
+import org.springframework.core.annotation.Order;
+import org.springframework.core.Ordered;
 import org.springframework.web.filter.OncePerRequestFilter;
 import java.io.IOException;
 import java.net.URI;
 import java.util.Set;
 
-/** Local demo boundary: no login; never expose this service on a public interface. */
+/** Defense in depth for the loopback-only demo; authentication is handled by Spring Security. */
 @Component
+@Order(Ordered.HIGHEST_PRECEDENCE)
 public class LocalSecurityFilter extends OncePerRequestFilter {
     private static final Set<String> LOCAL_HOSTS = Set.of("127.0.0.1", "localhost");
     private static final Set<String> MUTATIONS = Set.of("POST", "PUT", "PATCH", "DELETE");
